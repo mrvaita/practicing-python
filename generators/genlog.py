@@ -41,14 +41,16 @@ def field_map(dict_logs, name, func):
         yield dict_log
 
 
-def calc_bytes(lines):
-    bytecolumn = (line.rsplit(None, 1)[1] for line in lines)
-    byte_sent = (int(x) for x in bytecolumn if x != "-")
+def lines_from_dir(filepath, dirname):
+    names = Path(dirname).rglob(filepath)
+    files = gen_open(names)
+    lines = gen_concat(files)
 
-    return sum(byte_sent)
+    return lines
+    
 
+def apache_log(lines):
 
-def main():
     pattern = r"(\S+) (\S+) (\S+) \[(.*?)\] \"(\S+) (\S+) (\S+)\" (\S+) (\S+)"
     col_names = (
         "host",
@@ -62,16 +64,41 @@ def main():
         "bytes",
     )
 
-    log_names = Path("www/").rglob("access-log*")
-    log_files = gen_open(log_names)
-    log_lines = gen_concat(log_files)
-    log_groups = gen_grep(pattern, log_lines)
-    log = (dict(zip(col_names, t)) for t in log_groups)
+    groups = gen_grep(pattern, lines)
+    log = (dict(zip(col_names, t)) for t in groups)
     log = field_map(log, "status", int)
     log = field_map(log, "bytes", lambda s: int(s) if s != "-" else 0)
-    logger.info(next(log))
-    #byte_sent = calc_bytes(log_lines)
-    #logger.info(f"Total bytes = {byte_sent}")
+
+    return log
+
+
+
+def main():
+
+    dirname = "www/"
+    filepath = "access-log*"
+
+    log_lines = lines_from_dir(filepath, dirname)
+    log = list(apache_log(log_lines))
+
+    # Find the set of all documents that 404
+    stat404 = {r["request"] for r in log if r["status"] == 404}
+
+    # Find all request that transfer over a megabyte
+    large = [r for r in log if r["bytes"] > 1000000]
+
+    # Find the largest data transfer
+    logger.info("%d %s" % max((r["bytes"], r["request"]) for r in log))
+
+    # collect all unique host IP addresses
+    hosts = {r["host"] for r in log}
+
+    # Find the number of download of a file
+    file_download = sum(1 for r in log if r["request"] == "/ply/ply-2.3.tar.gz")
+
+    # Calculate the total number of bytes transferred
+    byte_sent = sum(r["bytes"] for r in log)
+    logger.info(f"Total bytes = {byte_sent}")
 
 
 if __name__ == "__main__":
